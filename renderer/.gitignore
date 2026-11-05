@@ -1,0 +1,7 @@
+node_modules/
+.npm-cache/
+out/
+build/
+.tmp/
+.remotion/
+*.log

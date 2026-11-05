@@ -1,0 +1,40 @@
+services:
+  db:
+    # 官方镜像：pgvector/pgvector:pg16（含 vector 扩展）
+    # 国内网络拉不到 docker.io 时走镜像站；两者都可用，按网络环境换一行即可
+    image: ${PG_IMAGE:-docker.m.daocloud.io/library/postgres:16-alpine}
+    # image: pgvector/pgvector:pg16
+    container_name: protocol-lab-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab_dev_pwd       # 仅本地开发；生产走 secrets
+      POSTGRES_DB: protocol_lab
+      TZ: Asia/Shanghai
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"                        # 教室网络上建议改成 "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro   # 首次启动（空卷）时自动执行
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab -d protocol_lab"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # 可选：只想"看库"时启动，答辩时不必开
+  adminer:
+    image: adminer:latest
+    container_name: protocol-lab-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]
+
+volumes:
+  pgdata:

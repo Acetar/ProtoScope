@@ -1,0 +1,25 @@
+{
+  "name": "protolearn-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "知识点科普动画工作台：目录 / 自然语言生成 / Player 预览 / 导出 MP4",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@remotion/player": "4.0.540",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.540",
+    "vue": "^3.5.13",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.5.4",
+    "vite": "^6.0.7"
+  }
+}

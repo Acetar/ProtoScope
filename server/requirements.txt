@@ -1,0 +1,11 @@
+# 后端依赖（Python 3.10+）
+# 装法：pip install -r server/requirements.txt
+# 本机 pip 的 vendor 目录被清过（ImportError: cannot import name 'FileCache'），
+# 当时是下载 wheel 后用 zipfile 解到 site-packages 的，正常机器直接 pip 即可。
+
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.10
+httpx>=0.28
+python-multipart>=0.0.9
+scapy>=2.6          # pcap / pcapng 解析（server/app/pcap.py）

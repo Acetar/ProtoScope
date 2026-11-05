@@ -1,0 +1,279 @@
+/* =================================================================
+   登录后新增的三块界面：AI 教师面板 / 管理员控制台 / 登录弹窗
+   沿用工作台的深色变量（--panel-2 / --line / --muted / --accent）。
+   ================================================================= */
+
+/* ---------- AI 教师面板 ---------- */
+
+.panel.tutor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: calc(100vh - 128px);
+  padding: 0;
+}
+
+.tutor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.tutor-head h2 {
+  margin: 0;
+  font-size: 14px;
+}
+.tutor-tag {
+  font-size: 11px;
+  color: var(--accent-2);
+  background: rgba(87, 212, 160, 0.12);
+  border-radius: 999px;
+  padding: 3px 9px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tutor-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 6px;
+  min-height: 0;
+}
+
+.tutor-empty p {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.preset {
+  font-size: 11.5px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+.preset:hover {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.msg {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  align-items: flex-start;
+}
+.msg.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+}
+.msg.user .avatar {
+  background: rgba(255, 180, 84, 0.18);
+  color: var(--accent);
+}
+
+.bubble {
+  font-size: 12.8px;
+  line-height: 1.78;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  max-width: 100%;
+}
+.msg.user .bubble {
+  background: rgba(255, 180, 84, 0.1);
+  border-color: rgba(255, 180, 84, 0.24);
+}
+
+.typing {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px 0;
+}
+.typing i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: blink 1.1s infinite;
+}
+.typing i:nth-child(2) { animation-delay: 0.18s; }
+.typing i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes blink {
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
+}
+
+.tutor-error {
+  font-size: 11.5px;
+  color: var(--danger);
+  margin: 6px 0 10px;
+  line-height: 1.6;
+}
+
+.tutor-input {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line);
+}
+.tutor-input textarea {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+}
+.tutor-input textarea:focus {
+  outline: none;
+  border-color: var(--accent-2);
+}
+
+/* ---------- 管理员控制台 ---------- */
+
+.modal.admin {
+  width: min(920px, 94vw);
+  max-height: 84vh;
+  overflow: auto;
+}
+.admin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.admin-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.stat b {
+  display: block;
+  font-size: 16px;
+}
+.stat span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.admin-table th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11px;
+}
+.admin-table .email {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.role {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--muted);
+}
+.role.admin {
+  background: rgba(255, 180, 84, 0.16);
+  color: var(--accent);
+}
+
+button.sm {
+  padding: 4px 10px;
+  font-size: 11.5px;
+}
+
+/* ---------- 登录弹窗 ---------- */
+
+.auth-modal {
+  width: min(420px, 92vw);
+}
+.auth-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.auth-head h2 {
+  margin: 0 0 3px;
+  font-size: 16px;
+}
+.auth-head .hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.landing-logo {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: #22c55e;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+}
+.auth-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.6;
+}

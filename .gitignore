@@ -1,0 +1,53 @@
+# ===== 依赖 =====
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-error.log*
+.npm-cache/
+.node-compile-cache/
+
+# ===== 构建产物 =====
+dist/
+build/
+renderer/build/
+web/dist/
+*.tsbuildinfo
+
+# ===== 运行时产物 =====
+server/data/*.db
+server/data/*.db-journal
+renderer/out/*.mp4
+renderer/out/*.png
+renderer/.work/
+renderer/.tmp/
+.tmp/
+
+# ===== 日志 =====
+*.log
+debug.log
+
+# ===== 开发期截图 / 调试脚本产物（可随时重跑 tools/browsercheck/check.js 生成）=====
+tools/browsercheck/*.png
+tools/browsercheck/*.log
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ===== 环境变量 / 密钥 =====
+.env
+.env.*
+!.env.example
+
+# ===== 工具目录 =====
+.dsh-vision-router/
+.claude/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
