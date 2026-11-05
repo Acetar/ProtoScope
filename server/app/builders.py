@@ -97,6 +97,10 @@ def callout(actor_id: str, text: str, at: float) -> dict:
     return {"type": "callout", "actor": actor_id, "text": text, "delay": int(at)}
 
 
+# 场景的呈现形态：渲染端按这个字段换"画面语言"，而不是所有知识点都画成两方块对飞
+PRESENTATIONS = ("packet-fly", "anatomy", "topology", "timeline", "stack", "compare")
+
+
 def scene(
     sid: str,
     title: str,
@@ -104,16 +108,28 @@ def scene(
     actions: Sequence[dict],
     caption: str,
     frames: int = DEFAULT_SCENE_FRAMES,
+    presentation: str = "packet-fly",
+    camera: Optional[dict] = None,
 ) -> dict:
-    """一个场景 = 一屏讲解 + 一组动作 + 一条底部字幕。"""
-    return {
+    """一个场景 = 一屏讲解 + 一组动作 + 一条底部字幕 + 一种呈现形态。
+
+    presentation：这一屏怎么画（报文飞行 / 报文解剖 / 拓扑路径 / 时间轴 / 协议栈 / 左右对比）
+    camera：镜头，如 {"zoom": 1.12, "focus": "client"}，渲染端在场景开始时缓推
+    """
+    if presentation not in PRESENTATIONS:
+        raise ValueError(f"unknown presentation: {presentation}")
+    item = {
         "id": sid,
         "title": title,
         "narration": narration,
         "actions": list(actions),
         "frames": frames,
         "caption": caption,
+        "presentation": presentation,
     }
+    if camera:
+        item["camera"] = camera
+    return item
 
 
 def compile_props(
@@ -134,16 +150,18 @@ def compile_props(
 
     for s in scenes:
         frames = s["frames"]
-        out_scenes.append(
-            {
-                "id": s["id"],
-                "title": s["title"],
-                "startFrame": cursor,
-                "durationInFrames": frames,
-                "narration": s["narration"],
-                "actions": s["actions"],
-            }
-        )
+        compiled = {
+            "id": s["id"],
+            "title": s["title"],
+            "startFrame": cursor,
+            "durationInFrames": frames,
+            "narration": s["narration"],
+            "actions": s["actions"],
+            "presentation": s.get("presentation", "packet-fly"),
+        }
+        if s.get("camera"):
+            compiled["camera"] = s["camera"]
+        out_scenes.append(compiled)
         # 字幕：跳过入场动画，留出结尾缓冲
         cap_start = cursor + min(24, frames // 6)
         cap_end = cursor + frames - min(12, frames // 10)

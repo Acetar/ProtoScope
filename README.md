@@ -31,11 +31,12 @@ B1 复用 A 的结构化事实（当前知识点的报文与字段）作为上�
 | --- | --- |
 | 设计文档 v1.0（含 4.6 AI 动效科普） | ✅ 已完成（[docs/设计文档.md](docs/设计文档.md)） |
 | Remotion 渲染工程（Composition + props 契约） | ✅ 已完成（[renderer/](renderer/README.md)） |
-| 知识库六主题规则编排 | ✅ 已完成（TCP 握手 / 四次挥手 / TLS / HTTP / ARP / DNS） |
+| 知识库十二主题规则编排 | ✅ 已完成（TCP 握手 / 四次挥手 / TLS / HTTP / ARP / DNS 递归 / 超时重传 / 慢启动 / DNS 迭代 / ICMP / DHCP / NAT） |
 | 后端 API（认证 / 设置 / 生成 / 作品 / 渲染） | ✅ 已完成（[server/](server/app/main.py)） |
 | 前端工作台（目录 / 预览 / 导出） | ✅ 已完成（[web/](web/src/App.vue)） |
 | 落地页 + 登录墙（未登录只见首页） | ✅ 已完成（[web/src/Landing.vue](web/src/Landing.vue)） |
 | AI 教师答疑（SSE 流式 + 无 key 兜底） | ✅ 已完成（[server/app/tutor.py](server/app/tutor.py)） |
+| AI 教师多会话 + 对话内生成动画 | ✅ 已完成（[web/src/TutorView.vue](web/src/TutorView.vue)） |
 | 管理员控制台（用户 / 角色 / 统计） | ✅ 最小版已完成（[web/src/components/AdminPanel.vue](web/src/components/AdminPanel.vue)） |
 | DeepSeek 编排（真实 key 端到端） | ⬜ 待你填 key 验证 |
 | pcap 解析（上传 → 会话/报文/字段树/时序图联动 → 变成动画） | ✅ 最小版已完成（[server/app/pcap.py](server/app/pcap.py)） |
@@ -116,7 +117,7 @@ server/               # FastAPI：规则库 + DeepSeek 编排 + SQLite/PG 双驱
   app/main.py         # 启动时 ensure_builtin_admin() 兜底创建 admin@lab.test
   app/planner.py      # 需求 → props 的编排与重试
   app/llm.py          # OpenAI 兼容调用（DeepSeek 默认）
-  app/library/        # 六个知识点的剧本构造器
+  app/library/        # 十二个知识点的剧本构造器（每个知识点一个文件）
   app/pcap.py         # pcap/pcapng 解析 → 会话 / 报文 / 字段（Wireshark 同名路径）
   app/from_capture.py # 把一段真实会话翻译成 AnimationProps
   app/tutor.py        # AI 教师（B1）：结构化上下文 + SSE 流式 + 无 key 兜底
@@ -124,7 +125,7 @@ web/                  # Vue3 前端
   src/Landing.vue     # 未登录落地页（唯一出口是登录/注册）
   src/AuthModal.vue   # 登录 / 注册弹窗（落地页与登录墙共用）
   src/App.vue         # 登录后的工作台：知识点动画 / 抓包解析 / AI 教师
-  src/components/TutorPanel.vue  # AI 教师对话面板
+  src/TutorView.vue   # AI 教师：多会话 + 消息流 + 对话内动画
   src/components/AdminPanel.vue  # 管理员控制台（用户 / 角色 / 统计）
 samples/              # 演示用抓包文件（http-handshake.pcap，12 个报文）
 tools/browsercheck/   # 开发期用 Chrome Headless 断言 DOM + 截图（不进产品）
@@ -145,7 +146,7 @@ tools/promote_admin.py     # 把任意账号提升为管理员（--list 看全�
 | --- | --- |
 | 知识点动画 | 选目录里的知识点或一句话描述，生成 / 播放 / 导出 MP4 |
 | 抓包解析 | 上传 pcap，三视图联动，把某段会话变成动画 |
-| AI 教师 | 左边保留当前剧本当"板书"，右边对话答疑（SSE 流式输出） |
+| AI 教师 | 多会话对话：左边会话列表，中间消息流，动画直接生成在消息里（SSE 流式输出） |
 
 管理员（`role = 'admin'`）额外看到「管理」按钮：用户列表、角色升降、以及用户/动画/抓包/数据库总量。
 种子账号 `demo@lab.test` 已设为管理员；其他账号可以通过管理员面板提升，不能自己降自己（避免把唯一管理员锁在门外）。
@@ -164,7 +165,7 @@ tools/promote_admin.py     # 把任意账号提升为管理员（--list 看全�
 - 右：时序图（箭头方向就是发包方向）+ 字段树（`ip.src` / `tcp.flags.syn` 这类 Wireshark 同名路径）
 
 点报文列表里任意一行，右边时序图的对应箭头和字段树同时跳过去；点时序图上的箭头也会反向选中那一行。
-底部调好时长后点「把这个会话变成动画 →」，就会用这段**真实报文**生成一段动画——和知识库那六个主题
+底部调好时长后点「把这个会话变成动画 →」，就会用这段**真实报文**生成一段动画——和知识库那十二个主题
 走的是同一个渲染器、同一份 props 契约。
 
 边界（答辩时主动说）：只解析单个文件、最多 5000 个报文 / 12 MB；不做 TCP 流重组（payload 只给可打印预览）；
@@ -180,6 +181,33 @@ tools/promote_admin.py     # 把任意账号提升为管理员（--list 看全�
 - 流式：`POST /api/tutor/ask` 走 SSE，前端用 fetch + ReadableStream 解析（EventSource 只能 GET，放不下问题与历史）
 - 降级：没有可用 key 时**仍返回 200**，内容是规则拼的要点（`offline_answer`），答辩断网也能演示
 - 切换知识点会清空对话——上下文变了，旧回答会误导
+
+### 会话与消息
+
+AI 教师不是一个输入框，而是一组**会话**：左侧「+ 新建对话」建一个，点一下就切过去。
+
+- 对话落库（`conversations` / `messages`），刷新、换设备都能接着聊
+- **可以同时开几个会话**：在 A 会话里等回答时切到 B 继续问，A 的回答会继续往 A 里写，
+  侧栏那个会话上的小圆点就是"正在生成"
+- 每轮追问只带最近 8 条消息，不把整份 pcap 或整段剧本塞进上下文
+- 「生成动画」也在对话框里：模型/规则库出片后，动画以**卡片**形式长在消息流中间，
+  不用切页面也不会把对话框挤到右边；需要大图时点卡片上的「全屏预览」
+- 换个知识点就换个会话（新建时可绑知识点），旧会话的上下文不会污染新问题
+
+**它会"听懂人话"**：
+
+| 你说 | 它做什么 |
+| --- | --- |
+| "你好" / "谢谢" | 正常打招呼、接住话头，不会把你的寒暄套进知识点剧本 |
+| "你能做什么" | 说清楚三件事：讲原理、看报文、排动画 |
+| "DNS 递归和迭代有什么区别" | 没绑知识点也能认出来（自动匹配到 DNS 剧本），按结论 → 分步 → 字段讲 |
+| "画一个 HTTP 请求响应的动画" | 回一句"好，我这就排一段"，**动画直接出现在这条消息下面**，不用切页面 |
+
+> 实现上，动画请求不靠模型"自觉"——服务端在 SSE 里多发一个 `event: action`，
+> 前端收到后调 `/api/tutor/animate` 就地出片。所以**没有模型 key 也能出片**，
+> 模型只负责说人话。`tools/browsercheck/chat.js` 覆盖这条链路（8 条断言）。
+
+`tools/browsercheck/tutor.js`（22 条）与 `chat.js`（8 条）是这条链路的自检脚本。
 
 ## 设计要点
 

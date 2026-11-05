@@ -107,6 +107,58 @@ CREATE INDEX IF NOT EXISTS idx_captures_user ON captures(user_id, created_at DES
 """
 
 
+# 会话与消息（AI 教师的多会话记录）单独成块：老库升级时也会被 CREATE TABLE IF NOT EXISTS 补上
+SCHEMA_CHAT_SQLITE = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL,
+    topic_id   TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'text',
+    content         TEXT NOT NULL DEFAULT '',
+    payload_json    TEXT,
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
+"""
+
+SCHEMA_CHAT_PG = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id         BIGSERIAL PRIMARY KEY,
+    user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title      VARCHAR(120) NOT NULL,
+    topic_id   VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id              BIGSERIAL PRIMARY KEY,
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role            VARCHAR(16) NOT NULL,
+    kind            VARCHAR(24) NOT NULL DEFAULT 'text',
+    content         TEXT NOT NULL DEFAULT '',
+    payload_json    JSONB,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
+"""
+
+
 # 老库补列：(列名, 类型)。两种驱动都能 ALTER 加列，但 SQLite 不支持 IF NOT EXISTS
 _TS_TYPE = "TIMESTAMPTZ" if USE_PG else "TEXT"
 
@@ -224,6 +276,7 @@ def init() -> None:
     with connect() as conn:
         if USE_PG:
             conn.executescript(SCHEMA_PG)
+            conn.executescript(SCHEMA_CHAT_PG)
             cols = {
                 row["column_name"]
                 for row in conn.execute(
@@ -237,6 +290,7 @@ def init() -> None:
             return
 
         conn.executescript(SCHEMA_SQLITE)
+        conn.executescript(SCHEMA_CHAT_SQLITE)
         # 轻量迁移：老库没有这几列时补上（SQLite 不支持 IF NOT EXISTS 加列）
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
         for name, ddl_type in NEW_USER_COLUMNS:
@@ -489,3 +543,136 @@ def delete_capture(user_id: int, cap_id: str) -> bool:
             "DELETE FROM captures WHERE id = ? AND user_id = ?", (cap_id, user_id)
         )
         return cur.rowcount > 0
+
+
+# ---------- 会话与消息（AI 教师） ----------
+# 一个会话 = 一段连续的教学对话；消息按 id 递增即为时间序。
+# 前端左侧列表只需要 title / 时间 / 最后一条内容摘要，所以 list 里带 message_count 与 last_snippet。
+
+def _conv_out(row: dict) -> dict:
+    return {
+        "id": int(row["id"]),
+        "title": row.get("title") or "新对话",
+        "topicId": row.get("topic_id") or "",
+        "createdAt": row.get("created_at"),
+        "updatedAt": row.get("updated_at"),
+        "messageCount": int(row.get("message_count") or 0),
+        "lastSnippet": row.get("last_snippet") or "",
+    }
+
+
+def list_conversations(user_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT c.*, "
+            " (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,"
+            " (SELECT COALESCE(m2.content, m2.kind) FROM messages m2"
+            "   WHERE m2.conversation_id = c.id ORDER BY m2.id DESC LIMIT 1) AS last_snippet"
+            " FROM conversations c WHERE c.user_id = ?"
+            " ORDER BY c.updated_at DESC, c.id DESC",
+            (user_id,),
+        ).fetchall()
+        return [_conv_out(dict(r)) for r in rows]
+
+
+def create_conversation(user_id: int, title: str = "新对话", topic_id: str | None = None) -> dict:
+    now = _now()
+    with connect() as conn:
+        conv_id = _insert_id(
+            conn,
+            "INSERT INTO conversations (user_id, title, topic_id, created_at, updated_at)"
+            " VALUES (?,?,?,?,?)",
+            (user_id, title or "新对话", topic_id or None, now, now),
+        )
+        row = conn.execute(
+            "SELECT c.*, 0 AS message_count, '' AS last_snippet"
+            " FROM conversations c WHERE c.id = ?",
+            (conv_id,),
+        ).fetchone()
+        return _conv_out(dict(row))
+
+
+def get_conversation(user_id: int, conv_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT c.*, "
+            " (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,"
+            " '' AS last_snippet"
+            " FROM conversations c WHERE c.id = ? AND c.user_id = ?",
+            (conv_id, user_id),
+        ).fetchone()
+        return _conv_out(dict(row)) if row else None
+
+
+def rename_conversation(user_id: int, conv_id: int, title: str) -> bool:
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (title.strip()[:120], _now(), conv_id, user_id),
+        )
+        return cur.rowcount > 0
+
+
+def touch_conversation(conv_id: int, title: str | None = None) -> None:
+    """每条新消息后调用：把会话顶到列表最前；标题仍是默认值时顺手改成首句问题。"""
+    with connect() as conn:
+        if title:
+            conn.execute(
+                "UPDATE conversations SET updated_at = ?, title = ? WHERE id = ?",
+                (_now(), title.strip()[:120], conv_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?", (_now(), conv_id)
+            )
+
+
+def delete_conversation(user_id: int, conv_id: int) -> bool:
+    with connect() as conn:
+        # messages 靠外键级联；显式删一次更保险（SQLite 默认没开外键约束）
+        conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
+        cur = conn.execute(
+            "DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id)
+        )
+        return cur.rowcount > 0
+
+
+def _msg_out(row: dict) -> dict:
+    data = dict(row)
+    raw = data.pop("payload_json", None)
+    data["payload"] = json.loads(raw) if isinstance(raw, str) else raw
+    data["conversationId"] = int(data.pop("conversation_id"))
+    data["kind"] = data.get("kind") or "text"
+    return data
+
+
+def list_messages(user_id: int, conv_id: int) -> list[dict]:
+    with connect() as conn:
+        owns = conn.execute(
+            "SELECT 1 AS ok FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id)
+        ).fetchone()
+        if not owns:
+            return []
+        rows = conn.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id", (conv_id,)
+        ).fetchall()
+        return [_msg_out(dict(r)) for r in rows]
+
+
+def add_message(
+    conv_id: int,
+    role: str,
+    content: str = "",
+    kind: str = "text",
+    payload: dict | None = None,
+) -> dict:
+    now = _now()
+    with connect() as conn:
+        msg_id = _insert_id(
+            conn,
+            "INSERT INTO messages (conversation_id, role, kind, content, payload_json, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (conv_id, role, kind, content or "", json.dumps(payload, ensure_ascii=False) if payload else None, now),
+        )
+        row = conn.execute("SELECT * FROM messages WHERE id = ?", (msg_id,)).fetchone()
+        return _msg_out(dict(row))

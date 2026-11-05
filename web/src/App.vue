@@ -10,7 +10,7 @@ import AdminPanel from './components/AdminPanel.vue';
 import AuthModal from './AuthModal.vue';
 import CaptureView from './CaptureView.vue';
 import Landing from './Landing.vue';
-import TutorPanel from './components/TutorPanel.vue';
+import TutorView from './TutorView.vue';
 import MotionPreview from './components/MotionPreview.vue';
 import {
   ApiError,
@@ -452,42 +452,8 @@ onMounted(async () => {
     </main>
 
     <!-- AI 教师独立成页：左边保留预览当"板书"，右边才是对话 -->
-    <main v-else class="layout">
-      <aside class="panel catalog">
-        <h2>当前讲解</h2>
-        <ul>
-          <li
-            v-for="kp in catalog"
-            :key="kp.id"
-            :class="{active: topic === kp.id}"
-            @click="pickKnowledgePoint(kp)"
-          >
-            <strong>{{ kp.title }}</strong>
-            <span>{{ kp.summary }}</span>
-          </li>
-        </ul>
-      </aside>
-
-      <section class="panel stage">
-        <template v-if="result">
-          <div class="stage-head">
-            <div>
-              <h2>{{ currentTitle }}</h2>
-              <p>{{ result.props.subtitle }}</p>
-            </div>
-            <div class="badge" :class="result.meta.source">{{ sourceLabel }}</div>
-          </div>
-          <MotionPreview :input-props="result.props" />
-        </template>
-        <div v-else class="skeleton">左侧选一个知识点，或先去「知识点动画」生成一个</div>
-      </section>
-
-      <TutorPanel
-        :topic-title="result?.props?.title || ''"
-        :topic-id="topic"
-        :props="result?.props"
-      />
-    </main>
+    <!-- AI 教师：会话式界面（左侧会话列表 + 中间消息流，动画长在消息流里） -->
+    <TutorView v-else :points="catalog" @toast="notify" />
 
     <!-- 管理员控制台 -->
     <AdminPanel v-if="adminOpen" @close="adminOpen = false" />

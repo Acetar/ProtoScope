@@ -222,6 +222,8 @@ export const captureApi = {
 export type ChatTurn = {role: 'user' | 'assistant'; content: string};
 
 export type TutorAskBody = {
+  /** 带上会话 id 时，这一问一答会落库（服务端以库里的记录组织上下文） */
+  conversationId?: number;
   question: string;
   topic?: string;
   /** 当前正在看的剧本：模型据此引用真实 seq/ack，而不是自己编 */
@@ -235,9 +237,18 @@ export type TutorAskBody = {
  * 用 fetch + ReadableStream 而不是 EventSource：后者只能 GET，
  * 而问题、上下文、历史都要放 body 里。
  */
+export type TutorStreamHandlers = {
+  onToken: (text: string) => void;
+  /** 服务端确认会话存在后立刻回一条 meta，把乐观消息换成真实 id */
+  onMeta?: (data: {conversationId: number; userMessageId: number | null}) => void;
+  onSaved?: (data: {assistantMessageId: number}) => void;
+  /** 用户这句话其实是"画个动画"，服务端会在流里丢一个可执行动作过来 */
+  onAction?: (data: {type: string; topicId?: string; prompt?: string}) => void;
+};
+
 export async function askTutor(
   body: TutorAskBody,
-  onToken: (text: string) => void,
+  handlers: TutorStreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
   const token = getToken();
@@ -280,12 +291,18 @@ export async function askTutor(
 
       const lines = raw.split('\n');
       const event = lines.find((l) => l.startsWith('event:'))?.slice(6).trim() || 'token';
-      const data = lines
+      const dataLines = lines
         .filter((l) => l.startsWith('data:'))
-        .map((l) => l.slice(5).replace(/^ /, ''))
-        .join('\n');
-      if (!data) continue;
-      if (event === 'token') onToken(data + '\n');
+        .map((l) => l.slice(5).replace(/^ /, ''));
+      if (!dataLines.length) continue;
+      // 一个事件可能有多行 data（片段里带换行），按规范用 \n 拼回原文；
+      // 绝不能在这里自己追加换行，否则模型逐 token 流式返回时每 token 一换行，气泡就碎了
+      const data = dataLines.join('\n');
+      if (event === 'token') handlers.onToken(data);
+      else if (!data) continue;
+      else if (event === 'meta') handlers.onMeta?.(JSON.parse(data));
+      else if (event === 'saved') handlers.onSaved?.(JSON.parse(data));
+      else if (event === 'action') handlers.onAction?.(JSON.parse(data));
       else if (event === 'error') throw new ApiError(data.replace(/^\[ERROR\]\s*/, ''));
     }
   }
@@ -309,4 +326,42 @@ export const adminApi = {
   stats: () => api<{users: number; animations: number; captures: number; backend: string}>('/api/admin/stats'),
   setRole: (id: number, role: string) =>
     api(`/api/admin/users/${id}/role`, {method: 'POST', body: {role}}),
+};
+
+// ---------------------------------------------------------------- AI 教师会话
+
+export type Conversation = {
+  id: number;
+  title: string;
+  topicId: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  lastSnippet: string;
+};
+
+export type ChatMessage = {
+  id: number;
+  conversationId: number;
+  role: 'user' | 'assistant';
+  kind: 'text' | 'animation';
+  content: string;
+  payload: {props?: any; meta?: any} | null;
+  created_at?: string;
+};
+
+export const conversationApi = {
+  list: () => api<Conversation[]>('/api/conversations'),
+  create: (body: {title?: string; topicId?: string} = {}) =>
+    api<Conversation>('/api/conversations', {method: 'POST', body}),
+  rename: (id: number, title: string) =>
+    api<Conversation>(`/api/conversations/${id}`, {method: 'PATCH', body: {title}}),
+  remove: (id: number) => api(`/api/conversations/${id}`, {method: 'DELETE'}),
+  messages: (id: number) => api<ChatMessage[]>(`/api/conversations/${id}/messages`),
+  /** 在对话里生成动画：产物作为一条 kind='animation' 的消息返回 */
+  animate: (body: {conversationId?: number; topic?: string; prompt?: string; durationSec?: number}) =>
+    api<{message: ChatMessage | null; conversationId?: number; animation?: GenerateResult}>(
+      '/api/tutor/animate',
+      {method: 'POST', body},
+    ),
 };

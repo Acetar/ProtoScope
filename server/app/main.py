@@ -5,6 +5,7 @@ LLM 采用 BYOK（用户自带 key）：优先用当前用户在设置里填的 
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -370,6 +371,7 @@ def tutor_ask(payload: dict, user: dict | None = Depends(auth.optional_user)):
 
     走 SSE：text/event-stream，每个事件是一小段文本。
     没有可用 key 时仍返回 200，只是内容是规则兜底——前端因此不需要特判降级。
+    带 conversationId（且已登录）时，一问一答会落库，前端靠它做会话记录。
     """
     question = (payload.get("question") or "").strip()
     if not question:
@@ -378,19 +380,67 @@ def tutor_ask(payload: dict, user: dict | None = Depends(auth.optional_user)):
         raise HTTPException(status_code=400, detail="问题太长了，控制在 500 字以内")
 
     topic_id = payload.get("topic") or ""
+    conv = None
+    if payload.get("conversationId") and user:
+        try:
+            conv = db.get_conversation(user["id"], int(payload["conversationId"]))
+        except (TypeError, ValueError):
+            conv = None
+        if not conv:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        topic_id = topic_id or conv.get("topicId") or ""
+
     topic = next((t for t in catalog.CATALOG if t["id"] == topic_id), None)
     scenes = tutor.scenes_from_props(payload.get("props") or {}) if payload.get("props") else None
     ctx = tutor.build_context(topic, scenes)
-    history = payload.get("history") or []
     cfg = _config_for(user)
 
+    # 有会话就以库里的记录为准组织上下文：刷新页面/换设备也接得上，不依赖前端记着的 history
+    history = payload.get("history") or []
+    user_msg = None
+    if conv:
+        stored = db.list_messages(user["id"], conv["id"])
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in stored
+            if m["kind"] == "text" and m["role"] in ("user", "assistant") and m["content"]
+        ][-8:]
+        user_msg = db.add_message(conv["id"], "user", question)
+        # 标题还是默认值时，用第一句问题当标题（列表里一眼能认出来）
+        if (conv.get("title") or "") in ("", "新对话"):
+            db.touch_conversation(conv["id"], question[:40])
+        else:
+            db.touch_conversation(conv["id"])
+
+    # 用户说"画一个 XX 动画"时，除了文字回答，还要真的去排一段
+    action = tutor.animation_intent(question)
+
     def gen():
+        parts: list[str] = []
         try:
+            if conv:
+                head = {
+                    "conversationId": conv["id"],
+                    "userMessageId": user_msg["id"] if user_msg else None,
+                }
+                yield "event: meta\ndata: " + json.dumps(head, ensure_ascii=False) + "\n\n"
+            if action:
+                yield "event: action\ndata: " + json.dumps(action, ensure_ascii=False) + "\n\n"
             for piece in tutor.answer(cfg, ctx, question, history):
-                # SSE 要求每条消息里不能有裸换行，折算成 \n 转义
-                data = piece.replace("\r", "")
-                for line in data.split("\n"):
-                    yield f"event: token\ndata: {line}\n\n"
+                parts.append(piece)
+                # SSE 里 data 不能有裸换行：把一个片段拆成多行 data，
+                # 前端按规范用换行拼回，段落分隔才不会丢
+                data = "".join(
+                    "data: " + line + "\n"
+                    for line in piece.replace("\r", "").split("\n")
+                )
+                yield "event: token\n" + data + "\n"
+            if conv:
+                saved = db.add_message(conv["id"], "assistant", "".join(parts))
+                db.touch_conversation(conv["id"])
+                yield "event: saved\ndata: " + json.dumps(
+                    {"assistantMessageId": saved["id"]}, ensure_ascii=False
+                ) + "\n\n"
             yield "event: done\ndata: [DONE]\n\n"
         except Exception as exc:  # noqa: BLE001  流已开始，只能把错误写进流里
             yield f"event: error\ndata: {str(exc)}\n\n"
@@ -399,6 +449,106 @@ def tutor_ask(payload: dict, user: dict | None = Depends(auth.optional_user)):
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     })
+
+
+# ---------- AI 教师会话 ----------
+# 会话是"一段连续的教学对话"。消息只追加、不修改：追问时把最近几条拼进 prompt，
+# 这样同一条消息的 id 在前端可以当稳定 key 用。
+
+def _own_conversation(conv_id: int, user: dict) -> dict:
+    conv = db.get_conversation(user["id"], conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return conv
+
+
+@app.get("/api/conversations")
+def list_conversations(user: dict = Depends(auth.require_user)) -> list[dict]:
+    return db.list_conversations(user["id"])
+
+
+@app.post("/api/conversations", status_code=201)
+def create_conversation(payload: dict | None = None, user: dict = Depends(auth.require_user)) -> dict:
+    payload = payload or {}
+    return db.create_conversation(
+        user["id"], (payload.get("title") or "新对话").strip()[:120], payload.get("topicId")
+    )
+
+
+@app.patch("/api/conversations/{conv_id}")
+def rename_conversation(conv_id: int, payload: dict, user: dict = Depends(auth.require_user)) -> dict:
+    _own_conversation(conv_id, user)
+    title = (payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="标题不能为空")
+    db.rename_conversation(user["id"], conv_id, title[:120])
+    return _own_conversation(conv_id, user)
+
+
+@app.delete("/api/conversations/{conv_id}")
+def remove_conversation(conv_id: int, user: dict = Depends(auth.require_user)) -> dict:
+    if not db.delete_conversation(user["id"], conv_id):
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return {"ok": True}
+
+
+@app.get("/api/conversations/{conv_id}/messages")
+def conversation_messages(conv_id: int, user: dict = Depends(auth.require_user)) -> list[dict]:
+    _own_conversation(conv_id, user)
+    return db.list_messages(user["id"], conv_id)
+
+
+@app.post("/api/tutor/animate")
+def tutor_animate(payload: dict, user: dict = Depends(auth.require_user)) -> dict:
+    """在对话里生成一段动画：产物作为一条 kind='animation' 的消息塞回消息流。
+
+    和 /api/generate 的区别只在"结果去哪儿"——一个返回给独立页面，一个落进会话。
+    """
+    conv = None
+    if payload.get("conversationId"):
+        conv = _own_conversation(int(payload["conversationId"]), user)
+
+    topic = (payload.get("topic") or "").strip() or None
+    prompt = (payload.get("prompt") or "").strip() or None
+    if not topic and not prompt:
+        raise HTTPException(status_code=400, detail="需要 topic 或 prompt")
+    duration = max(8, min(40, int(payload.get("durationSec") or 16)))
+
+    try:
+        result = planner.generate(
+            GenerateRequest(topic=topic, prompt=prompt, durationSec=duration), _config_for(user)
+        )
+    except planner.NoMatchError as exc:
+        raise HTTPException(
+            status_code=400, detail={"message": str(exc), "suggestions": exc.suggestions}
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    out = planner.to_payload(result)
+    try:
+        anim = db.save_animation(user["id"], out["props"], out["meta"])
+        out["meta"]["animationId"] = anim["id"]
+    except Exception:  # 存库失败不该让生成失败
+        pass
+
+    if not conv:
+        return {"message": None, "animation": out}
+
+    db.add_message(conv["id"], "user", f"帮我画一个动画：{prompt or result.props.title}")
+    msg = db.add_message(
+        conv["id"],
+        "assistant",
+        result.props.subtitle or result.props.title,
+        kind="animation",
+        payload={"props": out["props"], "meta": out["meta"]},
+    )
+    # 只在会话还没起过名时补一个（和 /api/tutor/ask 的规则一致），否则只刷新 updated_at
+    if (conv.get("title") or "") in ("", "新对话"):
+        db.touch_conversation(conv["id"], (result.props.title or "动画")[:40])
+    else:
+        db.touch_conversation(conv["id"])
+    return {"message": msg, "conversationId": conv["id"]}
 
 
 # ---------- 管理员 ----------

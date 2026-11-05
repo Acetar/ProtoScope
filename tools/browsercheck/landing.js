@@ -99,19 +99,22 @@ function check(name, ok, detail = '') {
   // ---- 4. AI 教师 ----
   await page.evaluate(() => [...document.querySelectorAll('.viewtabs button')].find((b) => b.textContent.includes('AI')).click());
   await wait(1000);
+  // 追问胶囊只在"空会话"时出现，所以先建一个干净的会话，不依赖历史数据
+  await page.evaluate(() => [...document.querySelectorAll('.conv-top button')].find((b) => b.textContent.includes('新建对话'))?.click());
+  await wait(800);
   const tutor = await page.evaluate(() => ({
-    panel: !!document.querySelector('.panel.tutor'),
+    panel: !!document.querySelector('.tutor-app'),
     presets: [...document.querySelectorAll('.preset')].map((b) => b.textContent.trim()),
-    hasBoard: !!document.querySelector('.panel.stage canvas, .panel.stage iframe, .panel.stage .skeleton'),
+    convs: document.querySelectorAll('.conv-item').length,
   }));
   check('AI 教师面板渲染', tutor.panel);
   check('追问胶囊存在', tutor.presets.length >= 3, tutor.presets.join(' / '));
   await shot('land-06-tutor');
 
   // 问一个问题：无 key 时后端回退规则模板，仍应出文字
-  await page.type('.tutor-input textarea', '为什么是三次握手');
-  await page.click('.tutor-input .primary');
-  await wait(3500);
+  await page.type('.composer-input', '为什么是三次握手');
+  await page.click('.composer-actions .primary');
+  await wait(4000);
   const answer = await page.evaluate(() => [...document.querySelectorAll('.msg.assistant .bubble')].map((b) => b.innerText));
   const last = answer[answer.length - 1] || '';
   check('助教返回文字', last.length > 20, `${last.length} 字`);
